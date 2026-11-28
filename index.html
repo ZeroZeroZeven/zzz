@@ -1,0 +1,594 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1a1d14">
+<title>Agent ZZZ</title>
+<link rel="icon" href="icon.png">
+<style>
+  /* Agenten-Konsole im Stil einer alten Schiffsbrücke. Alles Pixelgrafik:
+     jedes Gerät ist ein kleines Canvas, ganzzahlig hochskaliert (--s). */
+  :root { --s: 3px; --bg: #23271c; --panel: #2f3424; --hi: #555c3c; --lo: #15180f; --brass: #c8a040; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: #f0c040;
+    overflow: hidden; touch-action: manipulation; -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent; }
+  canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+  #con { position: fixed; inset: 0; display: grid; gap: calc(var(--s) * 3);
+    padding: calc(var(--s) * 3 + env(safe-area-inset-top)) calc(var(--s) * 3 + env(safe-area-inset-right))
+             calc(var(--s) * 3 + env(safe-area-inset-bottom)) calc(var(--s) * 3 + env(safe-area-inset-left));
+    box-sizing: border-box;
+    background:
+      repeating-linear-gradient(0deg, transparent 0 calc(var(--s) * 15), #1d2117 calc(var(--s) * 15) calc(var(--s) * 16)),
+      var(--bg);
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas: "head head head" "left mid right" "left bottom right"; }
+  .panel { background: var(--panel); box-sizing: border-box;
+    border: var(--s) solid var(--lo); box-shadow: inset var(--s) var(--s) 0 var(--hi), inset calc(var(--s) * -1) calc(var(--s) * -1) 0 #1f2318;
+    padding: calc(var(--s) * 3); display: flex; gap: calc(var(--s) * 3); align-items: center; justify-content: center; }
+  #head { grid-area: head; padding: var(--s); }
+  #left { grid-area: left; flex-direction: column; }
+  #right { grid-area: right; flex-direction: column; }
+  #bottom { grid-area: bottom; flex-wrap: wrap; }
+  #mid { grid-area: mid; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: calc(var(--s) * 2); min-height: 0; min-width: 0; }
+  #bezel { background: #0a0b08; padding: calc(var(--s) * 2);
+    border: var(--s) solid #6a6040; box-shadow: 0 0 0 var(--s) var(--lo), inset 0 0 0 var(--s) #000; }
+  #game { background: #000; }
+  .grp { display: flex; flex-direction: column; align-items: center; gap: var(--s); }
+  .row { display: flex; gap: calc(var(--s) * 2); align-items: center; }
+  .btn { cursor: pointer; touch-action: manipulation; }
+  #msg { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    font: 14px monospace; color: #f0c040; background: var(--bg); text-align: center; padding: 16px; }
+
+  /* Handy quer / niedrige Fenster: Bild oben, Bedienung darunter, Deko weg */
+  @media (max-height: 560px) and (orientation: landscape) {
+    #con { grid-template-columns: auto minmax(0, 1fr);
+      grid-template-rows: minmax(0, 1fr) auto;
+      grid-template-areas: "mid mid" "right bottom"; }
+    #head, #left, #ticker { display: none; }
+    #right { flex-direction: row; }
+  }
+  /* Handy hoch / schmale Fenster: alles untereinander, senkrecht scrollbar */
+  @media (max-width: 899px) and (orientation: portrait) {
+    #con { overflow-y: auto; overflow-x: hidden; align-content: start;
+      grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(5, max-content);
+      grid-template-areas: "head" "mid" "right" "bottom" "left"; }
+    #mid { min-height: auto; }
+    #right { flex-direction: row; }
+    #left { flex-direction: row; flex-wrap: wrap; }
+  }
+  /* Vollbild: nur der Bildschirm */
+  .full #head, .full #left, .full #right, .full #bottom, .full #ticker { display: none !important; }
+  .full, .full body { background: #000 !important; }
+  .full #con { grid-template-columns: 1fr; grid-template-rows: 1fr; grid-template-areas: "mid"; padding: 0; background: #000; }
+  .full #bezel { padding: 0; border: 0; box-shadow: none; }
+</style>
+</head>
+<body>
+<div id="con">
+  <div id="head" class="panel"><canvas id="plate"></canvas></div>
+  <div id="left" class="panel">
+    <div class="grp"><canvas id="radar"></canvas></div>
+    <div class="grp"><canvas id="cam1"></canvas></div>
+    <div class="grp"><canvas id="cam2"></canvas></div>
+  </div>
+  <div id="mid">
+    <div id="bezel"><canvas id="game" width="300" height="100" aria-label="Agent ZZZ Bildschirmschoner"></canvas></div>
+    <canvas id="ticker"></canvas>
+  </div>
+  <div id="right" class="panel">
+    <div class="grp">
+      <canvas id="knob" class="btn" role="button" aria-label="Ort wählen"></canvas>
+      <div class="row">
+        <canvas id="prev" class="btn" role="button" aria-label="Vorheriger Ort"></canvas>
+        <canvas id="next" class="btn" role="button" aria-label="Nächster Ort"></canvas>
+      </div>
+    </div>
+    <div class="grp"><canvas id="day" class="btn" role="button" aria-label="Tag, Nacht oder Zufall"></canvas></div>
+    <div class="grp"><canvas id="travel" class="btn" role="button" aria-label="Reisen an oder aus (Ort festhalten)"></canvas></div>
+  </div>
+  <div id="bottom" class="panel">
+    <canvas class="btn cmd" data-key="13" data-label="WEITER" data-hint="LEER" aria-label="Weiter (Leertaste)"></canvas>
+    <canvas class="btn cmd" data-key="0" data-label="ADVENT" data-hint="K" aria-label="Advent (K)"></canvas>
+    <canvas class="btn cmd" data-key="1" data-label="SILVESTER" data-hint="N" aria-label="Silvester (N)"></canvas>
+    <canvas class="btn cmd" data-key="2" data-label="SCHNEE" data-hint="S" aria-label="Schnee (S)"></canvas>
+    <canvas class="btn cmd" id="fs" data-label="VOLLBILD" data-hint="F11" aria-label="Vollbild"></canvas>
+  </div>
+</div>
+<div id="msg">LADE AGENT ZZZ ...</div>
+<script>
+(async () => {
+  // ---------------------------------------------------------------------------
+  // Pixelschrift (dieselbe 3x5-Schrift wie im Spiel)
+  // ---------------------------------------------------------------------------
+  const GLYPH = {
+    A:[2,5,7,5,5],B:[6,5,6,5,6],C:[3,4,4,4,3],D:[6,5,5,5,6],E:[7,4,6,4,7],F:[7,4,6,4,4],G:[3,4,5,5,3],
+    H:[5,5,7,5,5],I:[7,2,2,2,7],J:[1,1,1,5,2],K:[5,5,6,5,5],L:[4,4,4,4,7],M:[5,7,7,5,5],N:[6,5,5,5,5],
+    O:[2,5,5,5,2],P:[6,5,6,4,4],Q:[2,5,5,6,3],R:[6,5,6,5,5],S:[3,4,2,1,6],T:[7,2,2,2,2],U:[5,5,5,5,7],
+    V:[5,5,5,5,2],W:[5,5,7,7,5],X:[5,5,2,5,5],Y:[5,5,2,2,2],Z:[7,1,2,4,7],
+    '0':[7,5,5,5,7],'1':[2,6,2,2,7],'2':[6,1,2,4,7],'3':[6,1,2,1,6],'4':[5,5,7,1,1],'5':[7,4,6,1,6],
+    '6':[3,4,6,5,2],'7':[7,1,2,2,2],'8':[2,5,2,5,2],'9':[2,5,3,1,6],
+    '!':[2,2,2,0,2],'?':[6,1,2,0,2],'.':[0,0,0,0,2],':':[0,2,0,2,0],'-':[0,0,7,0,0],',':[0,0,0,2,4],
+    '+':[0,2,7,2,0],'=':[0,7,0,7,0],'<':[1,2,4,2,1],'>':[4,2,1,2,4],'/':[1,1,2,4,4],'(':[1,2,2,2,1],')':[4,2,2,2,4]
+  };
+  const textW = s => s.length * 4 - 1;
+  function text(c, s, x, y, col, shadow) {
+    s = s.toUpperCase();
+    for (let i = 0; i < s.length; i++) {
+      const g = GLYPH[s[i]]; if (!g) continue;
+      for (let r = 0; r < 5; r++) for (let k = 0; k < 3; k++) if (g[r] >> (2 - k) & 1) {
+        if (shadow) { c.fillStyle = shadow; c.fillRect(x + i * 4 + k + 1, y + r + 1, 1, 1); }
+        c.fillStyle = col; c.fillRect(x + i * 4 + k, y + r, 1, 1);
+      }
+    }
+  }
+  const rect = (c, x, y, w, h, col) => { c.fillStyle = col; c.fillRect(x, y, w, h); };
+  /// Metallplatte mit Kante und Nieten
+  function plate(c, w, h, base) {
+    rect(c, 0, 0, w, h, '#15180f');
+    rect(c, 1, 1, w - 2, h - 2, base || '#3f4530');
+    rect(c, 1, 1, w - 2, 1, '#6a7250'); rect(c, 1, 1, 1, h - 2, '#6a7250');
+    rect(c, 1, h - 2, w - 2, 1, '#22261a'); rect(c, w - 2, 1, 1, h - 2, '#22261a');
+    for (const [x, y] of [[3, 3], [w - 4, 3], [3, h - 4], [w - 4, h - 4]]) { rect(c, x, y, 1, 1, '#9a8a50'); }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Spiel laden
+  // ---------------------------------------------------------------------------
+  const msg = document.getElementById('msg');
+  const KEYS = ['k','n','s','i','a','f','j','z','p','l','u','w','o',' ','enter','arrowleft','arrowright','arrowup','arrowdown'];
+  let pressed = 0;
+  const held = new Set();
+  let ex;
+  try {
+    // ältere Browser kennen instantiateStreaming nicht: dann erst laden, dann starten
+    const { instance } = WebAssembly.instantiateStreaming
+      ? await WebAssembly.instantiateStreaming(fetch('agent_zzz.wasm'), {})
+      : await WebAssembly.instantiate(await (await fetch('agent_zzz.wasm')).arrayBuffer(), {});
+    ex = instance.exports;
+  } catch (e) {
+    msg.textContent = 'KONNTE NICHT GELADEN WERDEN: ' + e;
+    return;
+  }
+  msg.remove();
+  const W = ex.zzz_width(), H = ex.zzz_height();
+  const game = document.getElementById('game');
+  const gctx = game.getContext('2d');
+  const img = gctx.createImageData(W, H);
+  const rnd = crypto.getRandomValues(new Uint32Array(2));
+  ex.zzz_init(rnd[0], rnd[1], Date.now() / 1000);
+  const NPLACES = ex.zzz_place_count();
+  const SHORT = { 'TIEFSEE-STATION': 'TIEFSEE', 'PLANET GLIBB': 'PLANET' };
+  const placeName = i => {
+    const n = new TextDecoder().decode(new Uint8Array(ex.memory.buffer, ex.zzz_place_name(i), ex.zzz_place_name_len(i)));
+    return SHORT[n] || n;
+  };
+
+  // ---------------------------------------------------------------------------
+  // Geräte: jedes hat ein Canvas in eigener Pixelgröße und eine draw(t)-Funktion
+  // ---------------------------------------------------------------------------
+  const devices = [];
+  function device(id, w, h, draw) {
+    const cv = typeof id === 'string' ? document.getElementById(id) : id;
+    cv.width = w; cv.height = h;
+    const d = { cv, c: cv.getContext('2d'), w, h, draw };
+    devices.push(d);
+    return d;
+  }
+  let S = 3;
+  function sizeDevices() {
+    const small = innerWidth < 900 || innerHeight < 560;
+    const flat = innerHeight < 560 && innerWidth > innerHeight;   // Handy quer
+    S = flat ? 2 : (!small && innerWidth >= 1500 && innerHeight >= 900) ? 4 : 3;
+    // Tippflächen bleiben mindestens 44 CSS-Pixel groß
+    const tall = Math.ceil(46 / S);
+    for (const d of devices) {
+      if (d.cv.classList.contains('cmd')) d.h = Math.max(17, tall);
+      if (d.cv.id === 'prev' || d.cv.id === 'next') d.h = Math.max(15, tall);
+      if (d.cv.id === 'day') d.w = Math.max(52, 3 * tall + 7);
+      d.cv.width = d.w; d.cv.height = d.h;
+    }
+    document.documentElement.style.setProperty('--s', S + 'px');
+    // die Laufschrift passt sich der Breite an (nie breiter als das Fenster)
+    const room = Math.floor((document.getElementById('con').clientWidth - S * 14) / S);
+    for (const [id, max] of [['ticker', 150], ['plate', 120]]) {
+      const d = devices.find(d => d.cv.id === id);
+      if (d) { d.w = Math.max(60, Math.min(max, room)); d.cv.width = d.w; }
+    }
+    for (const d of devices) { d.cv.style.width = d.w * S + 'px'; d.cv.style.height = d.h * S + 'px'; }
+  }
+
+  // Zufall, der für Gags reicht
+  const chance = p => Math.random() < p;
+  let gag = { radar: 0, fly: 0, nosig: 0, pete: 0, coffee: 0 };   // Endzeitpunkte
+  let tickerExtra = null;
+
+  // Typenschild oben
+  device('plate', 120, 11, (c, w, h, t) => {
+    plate(c, w, h, '#2a2e20');
+    text(c, 'AGENT ZZZ', 5, 3, '#f0c040', '#000');
+    text(c, 'EINSATZZENTRALE', w - 5 - textW('EINSATZZENTRALE'), 3, '#c8d0a0', '#000');
+    const on = Math.floor(t * 2) % 2 === 0;
+    if (w >= 116) rect(c, 43, 4, 3, 3, on ? '#ff4030' : '#5a1810');
+  });
+
+  // Radar mit Sweep, Echos und gelegentlichem UFO (das nur eine Taube ist)
+  const blips = Array.from({ length: 5 }, () => ({ a: Math.random() * 6.28, r: 4 + Math.random() * 16, glow: 0 }));
+  device('radar', 48, 56, (c, w, h, t) => {
+    plate(c, w, h);
+    const cx = 24, cy = 25, R = 20;
+    rect(c, 3, 3, 42, 44, '#081408');
+    for (let y = -R; y <= R; y++) for (let x = -R; x <= R; x++) {
+      const d = Math.hypot(x, y);
+      if (d > R) continue;
+      let col = '#0a2410';
+      if (Math.abs(d - R) < 0.8 || Math.abs(d - 13) < 0.5 || Math.abs(d - 6) < 0.5 || x === 0 || y === 0) col = '#1a5a26';
+      rect(c, cx + x, cy + y, 1, 1, col);
+    }
+    const ang = t * 1.6 % (Math.PI * 2);
+    for (let k = 0; k < 18; k++) {          // Sweep mit Nachleuchten
+      const a = ang - k * 0.05;
+      for (let r = 1; r < R; r++) rect(c, cx + Math.round(Math.cos(a) * r), cy + Math.round(Math.sin(a) * r), 1, 1, k === 0 ? '#80ff90' : `rgba(64,255,112,${0.35 - k * 0.018})`);
+    }
+    for (const b of blips) {
+      let da = (ang - b.a) % (Math.PI * 2); if (da < 0) da += Math.PI * 2;
+      if (da < 0.1) b.glow = 1;
+      b.glow *= 0.985;
+      if (b.glow > 0.05) rect(c, cx + Math.round(Math.cos(b.a) * b.r), cy + Math.round(Math.sin(b.a) * b.r), 2, 2, `rgba(160,255,160,${b.glow})`);
+      if (chance(0.0008)) { b.a = Math.random() * 6.28; b.r = 4 + Math.random() * 16; }
+    }
+    // Gag: großes Echo "UFO?" ... "NUR EINE TAUBE"
+    if (t < gag.radar) {
+      const left = gag.radar - t;
+      const ux = cx + 8 + Math.round(Math.sin(t * 2) * 3), uy = cy - 8;
+      rect(c, ux - 2, uy, 5, 2, '#c0ffc0'); rect(c, ux - 1, uy - 1, 3, 1, '#c0ffc0');
+      text(c, left > 2.5 ? 'UFO?' : 'TAUBE', left > 2.5 ? 17 : 15, 48, '#ffef80');
+    } else {
+      text(c, 'RADAR', 14, 48, '#80c080');
+    }
+  });
+
+  // Überwachungskameras: zwei Monitore mit kleinen Szenen, Rauschen, REC
+  function monitor(c, w, h, t, label, scene, noSignal, fly, pete) {
+    plate(c, w, h);
+    rect(c, 3, 3, w - 6, h - 12, '#0a0e0a');
+    c.save(); c.beginPath(); c.rect(4, 4, w - 8, h - 14); c.clip();
+    if (noSignal) {
+      for (let y = 4; y < h - 10; y++) for (let x = 4; x < w - 4; x++) {
+        const v = Math.random() * 120 | 0; rect(c, x, y, 1, 1, `rgb(${v},${v},${v})`);
+      }
+      rect(c, 7, h / 2 - 6, w - 14, 7, '#000');
+      text(c, 'STOERUNG', 7 + ((w - 14) - textW('STOERUNG')) / 2 | 0, h / 2 - 5, '#e0e0e0');
+    } else {
+      scene(c, t);
+      if (pete) {                         // Pete schaut in die Kamera
+        const px = w / 2 - 6, py = h - 26;
+        rect(c, px, py + 4, 12, 9, '#f0f0f0'); rect(c, px, py + 2, 3, 5, '#202020'); rect(c, px + 9, py + 2, 3, 5, '#202020');
+        rect(c, px + 3, py + 7, 2, 2, '#101010'); rect(c, px + 7, py + 7, 2, 2, '#101010'); rect(c, px + 5, py + 10, 2, 1, '#101010');
+        text(c, 'WUFF', w - 20, 6, '#ffef80');
+      }
+      for (let y = 4; y < h - 10; y += 2) rect(c, 4, y, w - 8, 1, 'rgba(0,0,0,0.25)');   // Bildzeilen
+      if (Math.random() < 0.03) rect(c, 4, 4 + (Math.random() * (h - 14) | 0), w - 8, 1, 'rgba(200,255,200,0.25)');
+    }
+    if (fly) {                            // eine Fliege krabbelt über die Scheibe
+      const u = (t * 0.15) % 1, fx = 6 + u * (w - 12), fy = 8 + Math.sin(t * 3) * 3 + (h - 20) * u * 0.5;
+      rect(c, fx | 0, fy | 0, 2, 1, '#101010'); rect(c, (fx | 0) - 1, (fy | 0) + 1, 4, 1, '#303030');
+      if (Math.floor(t * 8) % 2) rect(c, fx | 0, (fy | 0) - 1, 1, 1, 'rgba(220,220,255,0.7)');
+    }
+    c.restore();
+    text(c, label, 4, h - 7, '#c8d0a0');
+    if (Math.floor(t * 1.5) % 2 === 0) { rect(c, w - 16, h - 7, 3, 3, '#ff3020'); }
+    text(c, 'REC', w - 12, h - 7, '#c8d0a0');
+  }
+  const cam1Scene = (c, t) => {          // Flur mit Tür, jemand mit Hut schleicht vorbei
+    rect(c, 4, 4, 40, 24, '#1a2a1e'); rect(c, 4, 22, 40, 6, '#24342a');
+    rect(c, 30, 9, 8, 13, '#0e1a12'); rect(c, 36, 15, 1, 1, '#a0c070');
+    const x = 6 + ((t * 6) % 44);
+    if (x < 44) {
+      rect(c, x, 13, 3, 7, '#80a080'); rect(c, x - 1, 12, 5, 1, '#80a080'); rect(c, x, 10, 3, 2, '#80a080');
+      rect(c, x + (Math.floor(t * 6) % 2), 20, 1, 2, '#80a080'); rect(c, x + 2 - (Math.floor(t * 6) % 2), 20, 1, 2, '#80a080');
+    }
+  };
+  const cam2Scene = (c, t) => {          // Dach mit Antenne, Wolken ziehen, eine Taube trippelt
+    rect(c, 4, 4, 40, 18, '#1a2a30');
+    const cx = (t * 3) % 50 - 6;
+    rect(c, cx, 8, 9, 2, '#4a6a6a'); rect(c, cx + 2, 7, 5, 1, '#4a6a6a');
+    rect(c, 4, 22, 40, 6, '#2a3a2e'); rect(c, 34, 12, 1, 10, '#6a8a6a'); rect(c, 32, 12, 5, 1, '#6a8a6a');
+    if (Math.floor(t * 2) % 2 === 0) rect(c, 34, 11, 1, 1, '#ff3020');
+    const px = 10 + Math.abs(((t * 4) % 30) - 15);
+    rect(c, px, 19, 3, 2, '#90a090'); rect(c, px + 3, 18, 1, 1, '#90a090');
+  };
+  device('cam1', 48, 38, (c, w, h, t) => monitor(c, w, h, t, 'CAM 1', cam1Scene, false, t < gag.fly, t < gag.pete));
+  device('cam2', 48, 38, (c, w, h, t) => monitor(c, w, h, t, 'CAM 2', cam2Scene, t < gag.nosig, false, false));
+
+  // Laufschrift unter dem Bildschirm
+  const NOTES = ['LAGE: RUHIG', 'PETE: WACH', 'FUNK: KEIN EMPFANG', 'AUFTRAG: GEHEIM'];
+  device('ticker', 150, 9, (c, w, h, t) => {
+    rect(c, 0, 0, w, h, '#15180f'); rect(c, 1, 1, w - 2, h - 2, '#1a1406');
+    const day = ['ZUFALL', 'TAG', 'NACHT'][ex.zzz_day()];
+    const line = (tickerExtra || '') + '  +++  ORT: ' + placeName(ex.zzz_place_index()) + '  +++  TAGESZEIT: ' + day + '  +++  REISEN: ' + (ex.zzz_travel() ? 'AN' : 'AUS') + '  +++  ' + NOTES.join('  +++  ') + '  +++  ';
+    const tw = line.length * 4;
+    const off = Math.floor(t * 14) % tw;
+    c.save(); c.beginPath(); c.rect(1, 1, w - 2, h - 2); c.clip();
+    text(c, line, 2 - off, 2, '#ffb020'); text(c, line, 2 - off + tw, 2, '#ffb020');
+    c.restore();
+  });
+
+  // Drehknopf für den Ort: Zeiger zeigt auf den aktuellen Ort
+  let knobAngle = 0;
+  device('knob', 52, 56, (c, w, h, t) => {
+    plate(c, w, h);
+    text(c, 'ORT', (w - textW('ORT')) / 2 | 0, 3, '#c8d0a0', '#000');
+    const cx = 26, cy = 27, i = ex.zzz_place_index();
+    const target = -2.4 + 4.8 * i / (NPLACES - 1);
+    knobAngle += (target - knobAngle) * 0.2;
+    for (let k = 0; k < NPLACES; k++) {     // Skala
+      const a = -2.4 + 4.8 * k / (NPLACES - 1) - Math.PI / 2;
+      rect(c, cx + Math.round(Math.cos(a) * 19), cy + Math.round(Math.sin(a) * 19), 1, 1, k === i ? '#ffe060' : '#8a8a60');
+    }
+    for (let y = -15; y <= 15; y++) for (let x = -15; x <= 15; x++) {   // Knopf mit Riffeln
+      const d = Math.hypot(x, y); if (d > 15) continue;
+      let col = d > 13 ? '#5a4a20' : '#8a7030';
+      if (d <= 13 && ((Math.atan2(y, x) * 6 / Math.PI + 12) | 0) % 2 === 0 && d > 10) col = '#a08038';
+      if (x < -4 && y < -4 && d < 10) col = '#b09048';
+      rect(c, cx + x, cy + y, 1, 1, col);
+    }
+    const a = knobAngle - Math.PI / 2;
+    for (let r = 2; r < 12; r++) rect(c, cx + Math.round(Math.cos(a) * r), cy + Math.round(Math.sin(a) * r), 1, 1, '#f8f0c0');
+    const name = placeName(i);
+    rect(c, 4, h - 10, w - 8, 7, '#0a0c06');
+    text(c, name, (w - textW(name)) / 2 | 0, h - 9, '#40ff70');
+  });
+  function arrow(id, dir) {
+    device(id, 24, 15, (c, w, h, t) => {
+      const down = pressedBtn === document.getElementById(id);
+      plate(c, w, h, down ? '#2a2e20' : '#4a5238');
+      text(c, dir < 0 ? '<' : '>', 10 + (down ? 1 : 0), ((h - 5) / 2 | 0) + (down ? 1 : 0), '#f0c040', '#000');
+    });
+  }
+  arrow('prev', -1); arrow('next', 1);
+
+  // Schalter: TAG / ZUFALL / NACHT, mit Lampe für die gerade herrschende Tageszeit
+  device('day', 52, 34, (c, w, h, t) => {
+    plate(c, w, h);
+    text(c, 'TAGESZEIT', (w - textW('TAGESZEIT')) / 2 | 0, 3, '#c8d0a0', '#000');
+    const pref = ex.zzz_day(); // 0 Zufall, 1 Tag, 2 Nacht
+    const pos = [1, 0, 2][pref];   // links TAG, Mitte ZUFALL, rechts NACHT
+    const labels = ['TAG', 'ZUF', 'NAC'];
+    const sw = (w - 7) / 3 | 0;
+    for (let k = 0; k < 3; k++) {
+      const x = 4 + k * sw;
+      rect(c, x, 11, sw - 2, 9, '#15180f'); rect(c, x + 1, 12, sw - 4, 7, k === pos ? '#6a5a20' : '#2a2e20');
+      text(c, labels[k], x + ((sw - 2 - textW(labels[k])) / 2 | 0), 13, k === pos ? '#ffe060' : '#8a8a70');
+    }
+    // Hebel
+    const lx = 4 + pos * sw + (sw - 2) / 2 | 0;
+    rect(c, 5, 24, w - 10, 3, '#15180f');
+    rect(c, lx - 2, 22, 5, 7, '#c8a040'); rect(c, lx - 1, 22, 3, 1, '#f0d080');
+    // Lampe: Sonne oder Mond
+    const night = ex.zzz_is_night();
+    rect(c, w - 8, h - 6, 4, 4, night ? '#c8d0ff' : '#ffd040');
+    if (night) rect(c, w - 6, h - 6, 2, 2, '#3f4530');
+  });
+
+  // Schalter: REISEN AN / AUS (aus = ZZZ bleibt am gewählten Ort)
+  device('travel', 52, 30, (c, w, h, t) => {
+    plate(c, w, h);
+    text(c, 'REISEN', (w - textW('REISEN')) / 2 | 0, 3, '#c8d0a0', '#000');
+    const pos = ex.zzz_travel() ? 0 : 1;   // links AN, rechts AUS
+    const labels = ['AN', 'AUS'];
+    const sw = (w - 7) / 2 | 0;
+    for (let k = 0; k < 2; k++) {
+      const x = 4 + k * sw;
+      rect(c, x, 11, sw - 2, 9, '#15180f'); rect(c, x + 1, 12, sw - 4, 7, k === pos ? '#6a5a20' : '#2a2e20');
+      text(c, labels[k], x + ((sw - 2 - textW(labels[k])) / 2 | 0), 13, k === pos ? '#ffe060' : '#8a8a70');
+    }
+    // Lampe: rot, wenn der Ort festgehalten ist
+    rect(c, w - 8, h - 6, 4, 4, pos ? '#ff4030' : '#40ff70');
+    text(c, pos ? 'ORT FEST' : 'FREI', 4, h - 7, '#8a8a70');
+  });
+
+  // Befehlsknöpfe (Beschriftung + Taste)
+  let pressedBtn = null;
+  document.querySelectorAll('.cmd').forEach(cv => {
+    const label = cv.dataset.label, hint = cv.dataset.hint;
+    const w = Math.max(textW(label), textW(hint)) + 10;
+    device(cv, w, 17, (c, w, h, t) => {
+      const down = pressedBtn === cv;
+      rect(c, 0, 0, w, h, '#15180f');
+      rect(c, 1, 1, w - 2, h - 2, down ? '#5a2a18' : '#8a3a20');
+      if (!down) { rect(c, 1, 1, w - 2, 1, '#c86040'); rect(c, 1, 1, 1, h - 2, '#c86040'); rect(c, 1, h - 2, w - 2, 1, '#4a1a10'); rect(c, w - 2, 1, 1, h - 2, '#4a1a10'); }
+      const d = down ? 1 : 0, y0 = (h - 12) / 2 | 0;
+      text(c, label, ((w - textW(label)) / 2 | 0) + d, y0 + 1 + d, '#fff0c0', '#300');
+      text(c, hint, ((w - textW(hint)) / 2 | 0) + d, y0 + 8 + d, '#f0b080');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Bedienung
+  // ---------------------------------------------------------------------------
+  function press(el, fn) {
+    el.addEventListener('pointerdown', e => { e.preventDefault(); pressedBtn = el; fn(e); });
+  }
+  addEventListener('pointerup', () => { pressedBtn = null; });
+  addEventListener('pointercancel', () => { pressedBtn = null; });
+  const go = d => ex.zzz_set_place((ex.zzz_place_index() + d + NPLACES) % NPLACES);
+  press(document.getElementById('prev'), () => go(-1));
+  press(document.getElementById('next'), () => go(1));
+  press(document.getElementById('knob'), e => {
+    const r = e.currentTarget.getBoundingClientRect();
+    go(e.clientX < r.left + r.width / 2 ? -1 : 1);
+  });
+  press(document.getElementById('day'), e => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const k = Math.min(2, Math.max(0, Math.floor((e.clientX - r.left) / r.width * 3)));
+    ex.zzz_set_day([1, 0, 2][k]);
+  });
+  press(document.getElementById('travel'), e => {
+    const r = e.currentTarget.getBoundingClientRect();
+    ex.zzz_set_travel(e.clientX < r.left + r.width / 2 ? 1 : 0);
+  });
+  let cssFull = false;
+  const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement || null;
+  const isFull = () => cssFull || !!fsEl();
+  document.querySelectorAll('.cmd[data-key]').forEach(cv => press(cv, () => { pressed |= 1 << +cv.dataset.key; }));
+  press(document.getElementById('fs'), () => {
+    const el = document.documentElement;
+    // ohne ?.-Schreibweise, damit auch alte Fernseh-Browser das Skript lesen.
+    // Vollbild schaltet die Seite immer selbst um (cssFull), auch wenn der
+    // Browser (z. B. Fernseher) kein echtes Vollbild kann.
+    if (isFull()) {
+      cssFull = false;
+      const ex = document.exitFullscreen || document.webkitExitFullscreen;
+      if (fsEl() && ex) ex.call(document);
+    } else {
+      cssFull = true;
+      const req = el.requestFullscreen || el.webkitRequestFullscreen;
+      try { const r = req && req.call(el); if (r && r.catch) r.catch(() => {}); } catch (e) {}
+    }
+    fit();
+  });
+  game.addEventListener('pointerdown', () => { pressed |= 1 << 13; });
+
+  // ---------------------------------------------------------------------------
+  // Bildschirm wach halten (SPEC 19): Fernseher (z. B. LG webOS) starten sonst
+  // ihren eigenen Schoner. 1) Wake-Lock, wo es ihn gibt. 2) Zusätzlich ein
+  // stummes, winziges Video, das ständig läuft – gespeist vom Spielbild selbst
+  // (canvas.captureStream), also ohne Datei aus dem Netz. Startet beim ersten
+  // Tippen/Tastendruck, weil Browser Videos sonst oft nicht abspielen.
+  // ---------------------------------------------------------------------------
+  const awake = { lock: null, video: null };
+  async function wake() {
+    try {
+      if (navigator.wakeLock && !awake.lock && document.visibilityState === 'visible') {
+        awake.lock = await navigator.wakeLock.request('screen');
+        awake.lock.addEventListener('release', () => { awake.lock = null; });
+      }
+    } catch (e) {}
+    try {
+      if (!awake.video && game.captureStream) {
+        const v = document.createElement('video');
+        v.muted = true; v.defaultMuted = true; v.loop = true; v.playsInline = true;
+        v.setAttribute('muted', ''); v.setAttribute('playsinline', ''); v.setAttribute('aria-hidden', 'true');
+        v.style.cssText = 'position:fixed;right:0;bottom:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:0';
+        v.srcObject = game.captureStream(10);
+        document.body.appendChild(v);
+        awake.video = v;
+      }
+      if (awake.video && awake.video.paused) {
+        const r = awake.video.play();
+        if (r && r.catch) r.catch(() => {});
+      }
+    } catch (e) {}
+  }
+  ['pointerdown', 'keydown', 'click', 'touchstart'].forEach(ev => addEventListener(ev, wake, true));
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') wake(); });
+  wake();
+  // für Tests: ist der Bildschirm-Wachhalter aktiv?
+  window.zzzAwake = () => ({ lock: !!awake.lock, video: !!awake.video && !awake.video.paused });
+  addEventListener('keydown', e => {
+    const i = KEYS.indexOf(e.key.toLowerCase() === 'y' ? 'z' : e.key.toLowerCase());
+    if (i < 0) return;
+    e.preventDefault();
+    if (!e.repeat) pressed |= 1 << i;
+    if (i >= 15) held.add(i);
+  });
+  addEventListener('keyup', e => {
+    const i = KEYS.indexOf(e.key.toLowerCase());
+    if (i >= 15) held.delete(i);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Größe: Konsole in ganzen Pixeln, Spielbild so groß es in der Mitte passt
+  // ---------------------------------------------------------------------------
+  const mid = document.getElementById('mid'), ticker = document.getElementById('ticker');
+  function fit() {
+    const full = isFull();
+    document.body.classList.toggle('full', full);
+    sizeDevices();
+    const pad = full ? 0 : S * 6 + 2 * S;
+    const tick = full || ticker.offsetParent === null ? 0 : ticker.offsetHeight + S * 2;
+    let aw = mid.clientWidth - pad, ah = mid.clientHeight - pad - tick;
+    // hochkant (Seite scrollt senkrecht): nur die Breite zählt
+    if (getComputedStyle(document.getElementById('con')).overflowY === 'auto') ah = innerHeight * 0.45;
+    // Vollbild: ganzes Fenster nehmen und das Bild mittig festsetzen
+    if (full) { aw = innerWidth; ah = innerHeight; }
+    let k = Math.min(aw / W, ah / H);
+    if (k >= 2) k = Math.floor(k * devicePixelRatio) / devicePixelRatio;
+    k = Math.max(k, 0.5);
+    for (const cv of [game]) {
+      cv.style.width = Math.floor(W * k) + 'px';
+      cv.style.height = Math.floor(H * k) + 'px';
+      cv.style.position = full ? 'fixed' : '';
+      cv.style.left = full ? Math.floor((innerWidth - W * k) / 2) + 'px' : '';
+      cv.style.top = full ? Math.floor((innerHeight - H * k) / 2) + 'px' : '';
+      cv.style.zIndex = full ? '50' : '';
+    }
+  }
+  if (window.ResizeObserver) new ResizeObserver(fit).observe(mid);
+  addEventListener('resize', fit);
+  // Browser-Vollbild beendet (z. B. Esc): auch das Seiten-Vollbild beenden
+  const fsChange = () => { if (!fsEl()) cssFull = false; fit(); };
+  document.addEventListener('fullscreenchange', fsChange);
+  document.addEventListener('webkitfullscreenchange', fsChange);
+  fit();
+
+  // ---------------------------------------------------------------------------
+  // Schleife: Spiel + Konsole; ab und zu ein kleiner Gag
+  // ---------------------------------------------------------------------------
+  const JOKES = ['ACHTUNG: TAUBE GESICHTET', 'KAFFEEMASCHINE: LEER', 'PETE HAT DEN FUNK ANGEKNABBERT', 'HUT SITZT. ALLES GUT.', 'GEHEIMDIENST-WITZ: STRENG GEHEIM'];
+  // Bildzeit-Zähler: nur mit ?perf in der Adresse (misst Rechnen + Zeichnen pro Bild)
+  const PERF = location.search.indexOf('perf') >= 0;
+  let perfEl = null, perfSum = 0, perfN = 0, perfMax = 0;
+  if (PERF) {
+    perfEl = document.createElement('div');
+    perfEl.style.cssText = 'position:fixed;left:4px;top:4px;z-index:99;font:12px monospace;color:#8f8;background:rgba(0,0,0,.7);padding:2px 4px';
+    document.body.appendChild(perfEl);
+  }
+  let last = performance.now(), rep = 0, nextGag = 8;
+  function frame(now) {
+    const dt = Math.min((now - last) / 1000, 0.1);
+    last = now;
+    const t = now / 1000;
+    rep += dt;
+    if (held.size && rep > 0.12) { rep = 0; held.forEach(i => pressed |= 1 << i); }
+    const t0 = PERF ? performance.now() : 0;
+    const ptr = ex.zzz_frame(dt, pressed);
+    pressed = 0;
+    img.data.set(new Uint8Array(ex.memory.buffer, ptr, W * H * 4));
+    gctx.putImageData(img, 0, 0);
+    if (PERF) {
+      const ms = performance.now() - t0;
+      perfSum += ms; perfN++; perfMax = Math.max(perfMax, ms);
+      if (perfN >= 60) {
+        perfEl.textContent = (perfSum / perfN).toFixed(2) + ' ms/Bild, max ' + perfMax.toFixed(1) + ' ms, Speicher ' + (ex.memory.buffer.byteLength / 1048576).toFixed(0) + ' MB';
+        perfSum = 0; perfN = 0; perfMax = 0;
+      }
+    }
+    // Wachhalter-Video angehalten (z. B. vom Fernseher)? Wieder anwerfen
+    if (awake.video && awake.video.paused && (t % 10) < dt) { const r = awake.video.play(); if (r && r.catch) r.catch(() => {}); }
+    if (t > nextGag) {
+      nextGag = t + 12 + Math.random() * 18;
+      const k = Math.random() * 5 | 0;
+      if (k === 0) gag.radar = t + 5;
+      if (k === 1) gag.fly = t + 7;
+      if (k === 2) gag.nosig = t + 2.5;
+      if (k === 3) gag.pete = t + 3;
+      if (k === 4) { tickerExtra = JOKES[Math.random() * JOKES.length | 0]; setTimeout(() => { tickerExtra = null; }, 20000); }
+    }
+    if (!isFull()) for (const d of devices) {
+      if (d.cv.offsetParent === null) continue;
+      d.c.clearRect(0, 0, d.w, d.h);
+      d.draw(d.c, d.w, d.h, t);
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  // für Tests: Gags von außen auslösen
+  window.zzzGag = (name, secs) => { if (name === 'ticker') tickerExtra = JOKES[0]; else gag[name] = performance.now() / 1000 + (secs || 5); };
+})();
+</script>
+</body>
+</html>
